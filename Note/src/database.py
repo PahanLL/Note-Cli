@@ -1,16 +1,17 @@
-import base64
 import psycopg2
 import logging
+import base64
 from config import config
+from datetime import datetime
 
-logging.basicConfig(filename='../logs/cms.log', level=logging.INFO,
+logging.basicConfig(filename='../logs/note.log', level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(name)s %(message)s')
 logger = logging.getLogger(__name__)
 
-class CMS:
+
+class Database:
     def __init__(self):
         self.params = config()
-        self.connection = psycopg2.connect(**self.params)
         self.connect()
 
     def connect(self):
@@ -19,7 +20,6 @@ class CMS:
             self.connection = psycopg2.connect(**self.params)
         except (Exception, psycopg2.DatabaseError) as error:
             logger.error('Failed to connect to the PostgreSQL database: %s', error)
-            print(error)
         finally:
             if self.connection is None:
                 self.connection.close()
@@ -29,136 +29,239 @@ class CMS:
             self.connection.close()
             self.connection = None
 
-    def createUser(self, firstName, lastName, email, telephone):
+    # Users
+
+    def createUser(self, name, email, password):
         try:
             cursor = self.connection.cursor()
-
             cursor.execute("SELECT * FROM \"user\" WHERE email = %s", (email,))
             user = cursor.fetchone()
-
             if user is not None:
-                print("User already exists.")
                 return logger.error('User already exists.')
-
-            cursor.execute("INSERT INTO \"user\" (first_name, last_name, email, telephone) VALUES (%s, %s, %s, %s)", (firstName, lastName, email, telephone))
+            cursor.execute("INSERT INTO \"user\" (name, email, password) VALUES (%s, %s, %s)", (name, email, password))
             self.connection.commit()
-            print("User created successfully.")
             cursor.close()
             return "User created successfully."
-
         except (Exception, psycopg2.DatabaseError) as error:
             logger.error('Failed to create user: %s', error)
-            print(error)
 
-    def uploadContent(self, userEmail, title, contentType, description, filePath):
+    def deleteUser(self, user_id):
         try:
             cursor = self.connection.cursor()
-
-            cursor.execute("SELECT * FROM \"user\" WHERE email = %s", (userEmail,))
-            user = cursor.fetchone()
-
-            if user is None:
-                print("User does not exist.")
-                return logger.error('User does not exist.')
-
-            with open(filePath, 'rb') as file:
-                binaryData = file.read()
-                encodedData = base64.b64encode(binaryData)
-
-            # Проверка на наличие такого же файла у пользователя
-            cursor.execute("SELECT * FROM content WHERE userEmail = %s AND content = %s", (userEmail, encodedData))
-            existing_content = cursor.fetchone()
-
-            if existing_content is not None:
-                print("This file has already been uploaded by the user.")
-                return logger.error('This file has already been uploaded by the user.')
-
-            cursor.execute("INSERT INTO content (userEmail, title, content_type, description, content) VALUES (%s, %s, %s, %s, %s)", 
-                           (userEmail, title, contentType, description, encodedData))
+            cursor.execute("DELETE FROM \"user\" WHERE user_id = %s", (user_id,))
             self.connection.commit()
-            print("Data added successfully.")
-            cursor.close()
-        except (Exception, psycopg2.DatabaseError) as error:
-            logger.error('Failed to upload content: %s', error)
-            print(error)
-
-    def deleteUser(self, userEmail):
-        try:
-            cursor = self.connection.cursor()
-
-            cursor.execute("DELETE FROM \"user\" WHERE email = %s", (userEmail,))
-            cursor.execute("DELETE FROM content WHERE userEmail = %s", (userEmail,))
-            self.connection.commit()
-            print("User deleted successfully.")
             cursor.close()
         except (Exception, psycopg2.DatabaseError) as error:
             logger.error('Failed to delete user: %s', error)
-            print(error)
 
-    def deleteContent(self, contentId, userEmail):
+    def login(self, email, password):
         try:
             cursor = self.connection.cursor()
-
-            cursor.execute("SELECT * FROM \"user\" WHERE email = %s", (userEmail,))
+            cursor.execute("SELECT * FROM \"user\" WHERE email = %s AND password = %s", (email, password))
             user = cursor.fetchone()
-
             if user is None:
-                print("User does not exist.")
-                return logger.error('User does not exist.')
-
-            cursor.execute("SELECT * FROM content WHERE id = %s AND userEmail = %s", (contentId, userEmail))
-            content = cursor.fetchone()
-
-            if content is None:
-                print("Content does not exist for this user.")
-                return logger.error('Content does not exist for this user.')
-
-            cursor.execute("DELETE FROM content WHERE id = %s AND userEmail = %s", (contentId, userEmail))
-            self.connection.commit()
-            print("Content deleted successfully.")
+                return logger.error('Login failed.')
             cursor.close()
+            return user
         except (Exception, psycopg2.DatabaseError) as error:
-            logger.error('Failed to delete content: %s', error)
-            print(error)
-    
-    def copyContent(self, sourceUserEmail, targetUserEmail, contentTitle):
+            logger.error('Failed to login: %s', error)
+
+    # Notes
+
+    def createNote(self, title, content, user_id, category_ids=None):
         try:
             cursor = self.connection.cursor()
+            cursor.execute("INSERT INTO note (title, content, user_id) VALUES (%s, %s, %s) RETURNING note_id",
+                           (title, content, user_id))
+            note_id = cursor.fetchone()[0]
 
-            cursor.execute("SELECT * FROM \"user\" WHERE email = %s", (sourceUserEmail,))
-            sourceUser = cursor.fetchone()
-
-            if sourceUser is None:
-                print("Source user does not exist.")
-                return logger.error('Source user does not exist.')
-
-            cursor.execute("SELECT * FROM \"user\" WHERE email = %s", (targetUserEmail,))
-            targetUser = cursor.fetchone()
-
-            if targetUser is None:
-                print("Target user does not exist.")
-                return logger.error('Target user does not exist.')
-
-            cursor.execute("SELECT * FROM content WHERE title = %s AND userEmail = %s", (contentTitle, sourceUserEmail))
-            content = cursor.fetchone()
-
-            if content is None:
-                print("Content does not exist for source user.")
-                return logger.error('Content does not exist for source user.')
-
-            cursor.execute("SELECT * FROM content WHERE userEmail = %s AND content = %s", (targetUserEmail, content[4]))
-            existing_content = cursor.fetchone()
-
-            if existing_content is not None:
-                print("This file has already been uploaded by the target user.")
-                return logger.error('This file has already been uploaded by the target user.')
-
-            cursor.execute("INSERT INTO content (userEmail, title, content_type, description, content) VALUES (%s, %s, %s, %s, %s)",
-                           (targetUserEmail, content[1], content[2], content[3], content[4]))
+            if category_ids is not None:
+                for category_id in category_ids:
+                    cursor.execute("INSERT INTO note_category (note_id, category_id) VALUES (%s, %s)",
+                                   (note_id, category_id))
+            
             self.connection.commit()
-            print("Content copied successfully.")
             cursor.close()
-
+            return "Note created successfully."
         except (Exception, psycopg2.DatabaseError) as error:
-            logger.error('Failed to copy content: %s', error)
-            print(error)
+            logger.error('Failed to create note: %s', error)
+            return "Note creation failed."
+
+    def updateNote(self, note_id, title=None, content=None, category_ids=None):
+        try:
+            cursor = self.connection.cursor()
+            
+            if title is not None:
+                cursor.execute("UPDATE note SET title = %s WHERE note_id = %s", (title, note_id))
+            if content is not None:
+                cursor.execute("UPDATE note SET content = %s WHERE note_id = %s", (content, note_id))
+            
+            if category_ids is not None:
+                for category_id in category_ids:
+                    if not isinstance(category_id, int):
+                        return "Invalid category ID."
+                    cursor.execute("INSERT INTO note_category (note_id, category_id) VALUES (%s, %s)",
+                                   (note_id, category_id))
+
+            self.connection.commit()
+            cursor.close()
+            return "Note updated successfully."
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to update note: %s', error)
+
+    def deleteNote(self, note_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("DELETE FROM note WHERE note_id = %s", (note_id,))
+            self.connection.commit()
+            cursor.close()
+            return "Note deleted successfully."
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to delete note: %s', error)
+            return "Note does not exist."
+
+    def getNote(self, note_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT * FROM note WHERE note_id = %s", (note_id,))
+            note = cursor.fetchone()
+            if note is None:
+                return "Note not found."
+            
+            cursor.execute("SELECT category_id FROM note_category WHERE note_id = %s", (note_id,))
+            categories = cursor.fetchall()
+            
+            cursor.close()
+            return note, categories
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to get note: %s', error)
+
+    # Categories
+
+    def createCategory(self, name):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("INSERT INTO category (name) VALUES (%s) RETURNING category_id", (name,))
+            category_id = cursor.fetchone()[0]
+            self.connection.commit()
+            cursor.close()
+            return f"Category created successfully. Category ID: {category_id}"
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to create category: %s', error)
+            return "Failed to create category."
+
+    def deleteCategory(self, category_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("DELETE FROM category WHERE category_id = %s", (category_id,))
+            self.connection.commit()
+            cursor.close()
+            return "Category deleted successfully."
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to delete category: %s', error)
+            return "Category does not exist."
+    
+    # Groups
+
+    def createGroup(self, name):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("INSERT INTO \"group\" (name) VALUES (%s)", (name,))
+            self.connection.commit()
+            cursor.close()
+            return "Group created successfully."
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to create group: %s', error)
+
+    def deleteGroup(self, group_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("DELETE FROM \"group\" WHERE group_id = %s", (group_id,))
+            self.connection.commit()
+            cursor.close()
+            return "Group deleted successfully."
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to delete group: %s', error)
+            return "Group does not exist."
+
+    def filterNotesByDate(self, start_date, end_date):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT * FROM note WHERE created_at BETWEEN %s AND %s", (start_date, end_date))
+            notes = cursor.fetchall()
+            cursor.close()
+            return notes
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to filter notes: %s', error)
+
+    def searchNoteByTitle(self, title, user_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT * FROM note WHERE title = %s AND user_id = %s", (title, user_id))
+            notes = cursor.fetchall()
+            cursor.close()
+            return notes
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to search notes by title: %s', error)
+
+    def getAllNotes(self, user_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT * FROM note WHERE user_id = %s", (user_id,))
+            notes = cursor.fetchall()
+            cursor.close()
+            return notes
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to get all notes: %s', error)
+
+    def getAllGroups(self):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT * FROM \"group\"")
+            groups = cursor.fetchall()
+            cursor.close()
+            return groups
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to get all groups: %s', error)
+
+    def getNotesInGroup(self, group_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT note.* FROM note INNER JOIN note_group ON note.note_id = note_group.note_id WHERE note_group.group_id = %s", (group_id,))
+            notes = cursor.fetchall()
+            cursor.close()
+            return notes
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to get notes in group: %s', error)
+
+    def addNoteToGroup(self, note_id, group_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("INSERT INTO note_group (note_id, group_id) VALUES (%s, %s)", (note_id, group_id))
+            self.connection.commit()
+            cursor.close()
+            return "Note added to group successfully."
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to add note to group: %s', error)
+
+    def assignCategoryToNote(self, note_id, category_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("INSERT INTO note_category (note_id, category_id) VALUES (%s, %s)", (note_id, category_id))
+            self.connection.commit()
+            cursor.close()
+            return "Category assigned to note successfully."
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to assign category to note: %s', error)
+
+    def getNoteCategories(self, note_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT category.name FROM category "
+                        "JOIN note_category ON category.category_id = note_category.category_id "
+                        "WHERE note_category.note_id = %s", (note_id,))
+            categories = [row[0] for row in cursor.fetchall()]
+            cursor.close()
+            return categories
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to get categories for note: %s', error)
