@@ -2,34 +2,35 @@ import psycopg2
 from config import config
 
 
-class CMS:
+class Database:
     @staticmethod
     def migrate():
         commands = (
             """
-            CREATE TABLE users (
+            CREATE TABLE "user" (
                 user_id SERIAL PRIMARY KEY,
                 name varchar(50) NOT NULL,
                 email varchar(100) NOT NULL UNIQUE,
                 password varchar(50) NOT NULL
             );
-            CREATE TABLE notes (
+            CREATE TABLE note (
                 note_id SERIAL PRIMARY KEY,
                 title varchar(100) NOT NULL,
                 content text NOT NULL,
-                user_id INT REFERENCES users (user_id) ON UPDATE CASCADE ON DELETE CASCADE
+                user_id INT REFERENCES "user" (user_id) ON UPDATE CASCADE ON DELETE CASCADE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-            CREATE TABLE categories (
+            CREATE TABLE category (
                 category_id SERIAL PRIMARY KEY,
                 name varchar(50) NOT NULL
             );
-            CREATE TABLE groups (
+            CREATE TABLE "group" (
                 group_id SERIAL PRIMARY KEY,
                 name varchar(50) NOT NULL
             );
             CREATE TABLE note_category (
-                note_id INT REFERENCES notes (note_id) ON UPDATE CASCADE ON DELETE CASCADE,
-                category_id INT REFERENCES categories (category_id) ON UPDATE CASCADE ON DELETE CASCADE,
+                note_id INT REFERENCES note (note_id) ON UPDATE CASCADE ON DELETE CASCADE,
+                category_id INT REFERENCES category (category_id) ON UPDATE CASCADE ON DELETE CASCADE,
                 PRIMARY KEY (note_id, category_id)
             );
             """
@@ -53,4 +54,4 @@ class CMS:
 
 
 if __name__ == '__main__':
-    CMS.migrate()
+    Database.migrate()
