@@ -1,1 +1,1 @@
-CREATE DATABASE Content;
+CREATE DATABASE notecli;

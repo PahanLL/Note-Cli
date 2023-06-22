@@ -33,6 +33,11 @@ class Database:
                 category_id INT REFERENCES category (category_id) ON UPDATE CASCADE ON DELETE CASCADE,
                 PRIMARY KEY (note_id, category_id)
             );
+            CREATE TABLE note_group (
+                note_id INT REFERENCES note (note_id) ON UPDATE CASCADE ON DELETE CASCADE,
+                group_id INT REFERENCES "group" (group_id) ON UPDATE CASCADE ON DELETE CASCADE,
+                PRIMARY KEY (note_id, group_id)
+            );
             """
         )
 

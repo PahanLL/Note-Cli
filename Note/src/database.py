@@ -1,13 +1,10 @@
 import psycopg2
 import logging
-import base64
 from config import config
-from datetime import datetime
 
 logging.basicConfig(filename='../logs/note.log', level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(name)s %(message)s')
 logger = logging.getLogger(__name__)
-
 
 class Database:
     def __init__(self):
@@ -87,21 +84,46 @@ class Database:
             logger.error('Failed to create note: %s', error)
             return "Note creation failed."
 
+    def filterNotesByDate(self, start_date, end_date):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT * FROM note WHERE created_at BETWEEN %s AND %s", (start_date, end_date))
+            notes = cursor.fetchall()
+            cursor.close()
+            return notes
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to filter notes by date: %s', error)
+
     def updateNote(self, note_id, title=None, content=None, category_ids=None):
         try:
             cursor = self.connection.cursor()
-            
+
             if title is not None:
                 cursor.execute("UPDATE note SET title = %s WHERE note_id = %s", (title, note_id))
+            else:
+                cursor.execute("UPDATE note SET title = NULL WHERE note_id = %s", (note_id,))
+            
             if content is not None:
                 cursor.execute("UPDATE note SET content = %s WHERE note_id = %s", (content, note_id))
-            
+            else:
+                cursor.execute("UPDATE note SET content = NULL WHERE note_id = %s", (note_id,))
+
             if category_ids is not None:
+                # Удаление связей существующих категорий
+                cursor.execute("DELETE FROM note_category WHERE note_id = %s", (note_id,))
+                
+                # Добавление новых связей категорий
                 for category_id in category_ids:
-                    if not isinstance(category_id, int):
-                        return "Invalid category ID."
-                    cursor.execute("INSERT INTO note_category (note_id, category_id) VALUES (%s, %s)",
-                                   (note_id, category_id))
+                    if category_id:
+                        cursor.execute("SELECT EXISTS(SELECT 1 FROM category WHERE category_id = %s)", (category_id,))
+                        category_exists = cursor.fetchone()[0]
+                        if category_exists:
+                            cursor.execute("INSERT INTO note_category (note_id, category_id) VALUES (%s, %s)",
+                                        (note_id, category_id))
+                        else:
+                            logger.error('Category with ID %s does not exist. Skipping...', category_id)
+                    else:
+                        logger.error('Invalid category ID. Skipping...')
 
             self.connection.commit()
             cursor.close()
@@ -136,6 +158,26 @@ class Database:
         except (Exception, psycopg2.DatabaseError) as error:
             logger.error('Failed to get note: %s', error)
 
+    def getAllNotes(self, user_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT * FROM note WHERE user_id = %s", (user_id,))
+            notes = cursor.fetchall()
+            cursor.close()
+            return notes
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to get all notes: %s', error)
+
+    def searchNoteByTitle(self, title, user_id):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT * FROM note WHERE title = %s AND user_id = %s", (title, user_id))
+            notes = cursor.fetchall()
+            cursor.close()
+            return notes
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to search notes by title: %s', error)
+
     # Categories
 
     def createCategory(self, name):
@@ -160,7 +202,7 @@ class Database:
         except (Exception, psycopg2.DatabaseError) as error:
             logger.error('Failed to delete category: %s', error)
             return "Category does not exist."
-    
+
     # Groups
 
     def createGroup(self, name):
@@ -173,6 +215,16 @@ class Database:
         except (Exception, psycopg2.DatabaseError) as error:
             logger.error('Failed to create group: %s', error)
 
+    def getAllGroups(self):
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT * FROM \"group\"")
+            groups = cursor.fetchall()
+            cursor.close()
+            return groups
+        except (Exception, psycopg2.DatabaseError) as error:
+            logger.error('Failed to get all groups: %s', error)
+
     def deleteGroup(self, group_id):
         try:
             cursor = self.connection.cursor()
@@ -184,50 +236,12 @@ class Database:
             logger.error('Failed to delete group: %s', error)
             return "Group does not exist."
 
-    def filterNotesByDate(self, start_date, end_date):
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT * FROM note WHERE created_at BETWEEN %s AND %s", (start_date, end_date))
-            notes = cursor.fetchall()
-            cursor.close()
-            return notes
-        except (Exception, psycopg2.DatabaseError) as error:
-            logger.error('Failed to filter notes: %s', error)
-
-    def searchNoteByTitle(self, title, user_id):
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT * FROM note WHERE title = %s AND user_id = %s", (title, user_id))
-            notes = cursor.fetchall()
-            cursor.close()
-            return notes
-        except (Exception, psycopg2.DatabaseError) as error:
-            logger.error('Failed to search notes by title: %s', error)
-
-    def getAllNotes(self, user_id):
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT * FROM note WHERE user_id = %s", (user_id,))
-            notes = cursor.fetchall()
-            cursor.close()
-            return notes
-        except (Exception, psycopg2.DatabaseError) as error:
-            logger.error('Failed to get all notes: %s', error)
-
-    def getAllGroups(self):
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT * FROM \"group\"")
-            groups = cursor.fetchall()
-            cursor.close()
-            return groups
-        except (Exception, psycopg2.DatabaseError) as error:
-            logger.error('Failed to get all groups: %s', error)
-
     def getNotesInGroup(self, group_id):
         try:
             cursor = self.connection.cursor()
-            cursor.execute("SELECT note.* FROM note INNER JOIN note_group ON note.note_id = note_group.note_id WHERE note_group.group_id = %s", (group_id,))
+            cursor.execute("SELECT note.* FROM note "
+                           "INNER JOIN note_group ON note.note_id = note_group.note_id "
+                           "WHERE note_group.group_id = %s", (group_id,))
             notes = cursor.fetchall()
             cursor.close()
             return notes
@@ -237,8 +251,20 @@ class Database:
     def addNoteToGroup(self, note_id, group_id):
         try:
             cursor = self.connection.cursor()
+            
+            cursor.execute("SELECT * FROM note WHERE note_id = %s", (note_id,))
+            note = cursor.fetchone()
+            if note is None:
+                return "Note does not exist."
+            
+            cursor.execute("SELECT * FROM \"group\" WHERE group_id = %s", (group_id,))
+            group = cursor.fetchone()
+            if group is None:
+                return "Group does not exist."
+            
             cursor.execute("INSERT INTO note_group (note_id, group_id) VALUES (%s, %s)", (note_id, group_id))
             self.connection.commit()
+            
             cursor.close()
             return "Note added to group successfully."
         except (Exception, psycopg2.DatabaseError) as error:
@@ -247,8 +273,25 @@ class Database:
     def assignCategoryToNote(self, note_id, category_id):
         try:
             cursor = self.connection.cursor()
+
+            cursor.execute("SELECT * FROM note WHERE note_id = %s", (note_id,))
+            note = cursor.fetchone()
+            if note is None:
+                return "Note does not exist."
+
+            cursor.execute("SELECT * FROM category WHERE category_id = %s", (category_id,))
+            category = cursor.fetchone()
+            if category is None:
+                return "Category does not exist."
+
+            cursor.execute("SELECT * FROM note_category WHERE note_id = %s AND category_id = %s", (note_id, category_id))
+            existing_relation = cursor.fetchone()
+            if existing_relation is not None:
+                return "Category is already assigned to the note."
+
             cursor.execute("INSERT INTO note_category (note_id, category_id) VALUES (%s, %s)", (note_id, category_id))
             self.connection.commit()
+
             cursor.close()
             return "Category assigned to note successfully."
         except (Exception, psycopg2.DatabaseError) as error:
@@ -258,8 +301,8 @@ class Database:
         try:
             cursor = self.connection.cursor()
             cursor.execute("SELECT category.name FROM category "
-                        "JOIN note_category ON category.category_id = note_category.category_id "
-                        "WHERE note_category.note_id = %s", (note_id,))
+                           "JOIN note_category ON category.category_id = note_category.category_id "
+                           "WHERE note_category.note_id = %s", (note_id,))
             categories = [row[0] for row in cursor.fetchall()]
             cursor.close()
             return categories
